@@ -15,7 +15,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,7 +22,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/golang/snappy"
 	config_util "github.com/prometheus/common/config"
 	"github.com/prometheus/common/model"
 
@@ -113,14 +111,15 @@ func parseAndPushMetrics(client *remote.Client, data []byte, labels map[string]s
 		fmt.Fprintln(os.Stderr, "  FAILED:", err)
 		return false
 	}
-
-	// Encode the request body into snappy encoding.
-	compressed := snappy.Encode(nil, raw)
-	err = client.Store(context.Background(), compressed, 0)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "  FAILED:", err)
-		return false
-	}
+	fmt.Println("skipping for now, raw: %d", len(raw))
+	//
+	//// Encode the request body into snappy encoding.
+	//compressed := snappy.Encode(nil, raw)
+	//err = client.Store(context.Background(), compressed, 0)
+	//if err != nil {
+	//	fmt.Fprintln(os.Stderr, "  FAILED:", err)
+	//	return false
+	//}
 
 	return true
 }

@@ -73,7 +73,7 @@ func TestStoreHTTPErrorHandling(t *testing.T) {
 		c, err := NewWriteClient(hash, conf)
 		require.NoError(t, err)
 
-		err = c.Store(context.Background(), []byte{}, 0)
+		err = c.StoreSamples(context.Background(), nil, 0)
 		if test.err != nil {
 			require.EqualError(t, err, test.err.Error())
 		} else {
@@ -133,7 +133,7 @@ func TestClientRetryAfter(t *testing.T) {
 			c := getClient(getClientConfig(serverURL, tc.retryOnRateLimit))
 
 			var recErr RecoverableError
-			err = c.Store(context.Background(), []byte{}, 0)
+			err = c.StoreSamples(context.Background(), nil, 0)
 			require.Equal(t, tc.expectedRecoverable, errors.As(err, &recErr), "Mismatch in expected recoverable error status.")
 			if tc.expectedRecoverable {
 				require.Equal(t, tc.expectedRetryAfter, err.(RecoverableError).retryAfter)

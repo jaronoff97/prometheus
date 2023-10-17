@@ -193,9 +193,30 @@ type RecoverableError struct {
 	retryAfter model.Duration
 }
 
-// Store sends a batch of samples to the HTTP endpoint, the request is the proto marshalled
+// StoreSamples sends a batch of samples to the HTTP endpoint, the request is the proto marshalled
 // and encoded bytes from codec.go.
-func (c *Client) Store(ctx context.Context, req []byte, attempt int) error {
+func (c Client) StoreSamples(ctx context.Context, samples []prompb.TimeSeries, attempt int) error {
+	pBuf := proto.NewBuffer(nil)
+	req, _, err := buildWriteRequestSamples(samples, pBuf, nil)
+	if err != nil {
+		return err
+	}
+	return c.storeData(ctx, req, attempt)
+}
+
+// StoreMetadata sends a batch of metadata to the HTTP endpoint, the request is the proto marshalled
+// and encoded bytes from codec.go.
+func (c Client) StoreMetadata(ctx context.Context, metadata []prompb.MetricMetadata, attempt int) error {
+	pBuf := proto.NewBuffer(nil)
+	req, _, err := buildWriteRequestMetadata(metadata, pBuf, nil)
+	if err != nil {
+		return err
+	}
+	return c.storeData(ctx, req, attempt)
+}
+
+func (c Client) storeData(ctx context.Context, req []byte, attempt int) error {
+
 	httpReq, err := http.NewRequest("POST", c.urlString, bytes.NewReader(req))
 	if err != nil {
 		// Errors from NewRequest are from unparsable URLs, so are not
@@ -270,7 +291,7 @@ func (c Client) Endpoint() string {
 }
 
 // Read reads from a remote endpoint.
-func (c *Client) Read(ctx context.Context, query *prompb.Query) (*prompb.QueryResult, error) {
+func (c Client) Read(ctx context.Context, query *prompb.Query) (*prompb.QueryResult, error) {
 	c.readQueries.Inc()
 	defer c.readQueries.Dec()
 
@@ -340,4 +361,51 @@ func (c *Client) Read(ctx context.Context, query *prompb.Query) (*prompb.QueryRe
 	}
 
 	return resp.Results[0], nil
+}
+
+func buildWriteRequestSamples(samples []prompb.TimeSeries, pBuf *proto.Buffer, buf []byte) ([]byte, int64, error) {
+	return buildWriteRequest(samples, nil, pBuf, buf)
+}
+
+func buildWriteRequestMetadata(metadata []prompb.MetricMetadata, pBuf *proto.Buffer, buf []byte) ([]byte, int64, error) {
+	return buildWriteRequest(nil, metadata, pBuf, buf)
+}
+
+func buildWriteRequest(samples []prompb.TimeSeries, metadata []prompb.MetricMetadata, pBuf *proto.Buffer, buf []byte) ([]byte, int64, error) {
+	var highest int64
+	for _, ts := range samples {
+		// At the moment we only ever append a TimeSeries with a single sample or exemplar in it.
+		if len(ts.Samples) > 0 && ts.Samples[0].Timestamp > highest {
+			highest = ts.Samples[0].Timestamp
+		}
+		if len(ts.Exemplars) > 0 && ts.Exemplars[0].Timestamp > highest {
+			highest = ts.Exemplars[0].Timestamp
+		}
+		if len(ts.Histograms) > 0 && ts.Histograms[0].Timestamp > highest {
+			highest = ts.Histograms[0].Timestamp
+		}
+	}
+
+	req := &prompb.WriteRequest{
+		Timeseries: samples,
+		Metadata:   metadata,
+	}
+
+	if pBuf == nil {
+		pBuf = proto.NewBuffer(nil) // For convenience in tests. Not efficient.
+	} else {
+		pBuf.Reset()
+	}
+	err := pBuf.Marshal(req)
+	if err != nil {
+		return nil, highest, err
+	}
+
+	// snappy uses len() to see if it needs to allocate a new slice. Make the
+	// buffer as long as possible.
+	if buf != nil {
+		buf = buf[0:cap(buf)]
+	}
+	compressed := snappy.Encode(buf, pBuf.Bytes())
+	return compressed, highest, nil
 }

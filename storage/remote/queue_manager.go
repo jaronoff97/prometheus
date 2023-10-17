@@ -24,7 +24,6 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/gogo/protobuf/proto"
-	"github.com/golang/snappy"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/model"
 	"go.opentelemetry.io/otel"
@@ -379,8 +378,10 @@ func (m *queueManagerMetrics) unregister() {
 // WriteClient defines an interface for sending a batch of samples to an
 // external timeseries database.
 type WriteClient interface {
-	// Store stores the given samples in the remote storage.
-	Store(context.Context, []byte, int) error
+	// StoreSamples stores the given samples in the remote storage.
+	StoreSamples(context.Context, []prompb.TimeSeries, int) error
+	// StoreMetadata stores the given metadata in the remote storage.
+	StoreMetadata(context.Context, []prompb.MetricMetadata, int) error
 	// Name uniquely identifies the remote storage.
 	Name() string
 	// Endpoint is the remote read or write endpoint for the storage client.
@@ -529,10 +530,10 @@ func (t *QueueManager) AppendMetadata(ctx context.Context, metadata []scrape.Met
 
 func (t *QueueManager) sendMetadataWithBackoff(ctx context.Context, metadata []prompb.MetricMetadata, pBuf *proto.Buffer) error {
 	// Build the WriteRequest with no samples.
-	req, _, err := buildWriteRequest(nil, metadata, pBuf, nil)
-	if err != nil {
-		return err
-	}
+	//req, _, err := buildWriteRequest(nil, metadata, pBuf, nil)
+	//if err != nil {
+	//	return err
+	//}
 
 	metadataCount := len(metadata)
 
@@ -552,7 +553,8 @@ func (t *QueueManager) sendMetadataWithBackoff(ctx context.Context, metadata []p
 		}
 
 		begin := time.Now()
-		err := t.storeClient.Store(ctx, req, try)
+		//err := t.storeClient.Store(ctx, req, try)
+		err := t.storeClient.StoreMetadata(ctx, metadata, try)
 		t.metrics.sentBatchDuration.Observe(time.Since(begin).Seconds())
 
 		if err != nil {
@@ -566,12 +568,12 @@ func (t *QueueManager) sendMetadataWithBackoff(ctx context.Context, metadata []p
 	retry := func() {
 		t.metrics.retriedMetadataTotal.Add(float64(len(metadata)))
 	}
-	err = sendWriteRequestWithBackoff(ctx, t.cfg, t.logger, attemptStore, retry)
+	err := sendWriteRequestWithBackoff(ctx, t.cfg, t.logger, attemptStore, retry)
 	if err != nil {
 		return err
 	}
 	t.metrics.metadataTotal.Add(float64(len(metadata)))
-	t.metrics.metadataBytesTotal.Add(float64(len(req)))
+	//t.metrics.metadataBytesTotal.Add(float64(len(req)))
 	return nil
 }
 
@@ -1490,15 +1492,15 @@ func (s *shards) sendSamples(ctx context.Context, samples []prompb.TimeSeries, s
 // sendSamples to the remote storage with backoff for recoverable errors.
 func (s *shards) sendSamplesWithBackoff(ctx context.Context, samples []prompb.TimeSeries, sampleCount, exemplarCount, histogramCount int, pBuf *proto.Buffer, buf *[]byte) error {
 	// Build the WriteRequest with no metadata.
-	req, highest, err := buildWriteRequest(samples, nil, pBuf, *buf)
-	if err != nil {
-		// Failing to build the write request is non-recoverable, since it will
-		// only error if marshaling the proto to bytes fails.
-		return err
-	}
-
-	reqSize := len(req)
-	*buf = req
+	//req, highest, err := buildWriteRequest(samples, nil, pBuf, *buf)
+	//if err != nil {
+	//	// Failing to build the write request is non-recoverable, since it will
+	//	// only error if marshaling the proto to bytes fails.
+	//	return err
+	//}
+	//
+	//reqSize := len(req)
+	//*buf = req
 
 	// An anonymous function allows us to defer the completion of our per-try spans
 	// without causing a memory leak, and it has the nice effect of not propagating any
@@ -1508,7 +1510,7 @@ func (s *shards) sendSamplesWithBackoff(ctx context.Context, samples []prompb.Ti
 		defer span.End()
 
 		span.SetAttributes(
-			attribute.Int("request_size", reqSize),
+			//attribute.Int("request_size", reqSize),
 			attribute.Int("samples", sampleCount),
 			attribute.Int("try", try),
 			attribute.String("remote_name", s.qm.storeClient.Name()),
@@ -1526,7 +1528,8 @@ func (s *shards) sendSamplesWithBackoff(ctx context.Context, samples []prompb.Ti
 		s.qm.metrics.samplesTotal.Add(float64(sampleCount))
 		s.qm.metrics.exemplarsTotal.Add(float64(exemplarCount))
 		s.qm.metrics.histogramsTotal.Add(float64(histogramCount))
-		err := s.qm.client().Store(ctx, *buf, try)
+		//err := s.qm.client().Store(ctx, *buf, try)
+		err := s.qm.client().StoreSamples(ctx, samples, try)
 		s.qm.metrics.sentBatchDuration.Observe(time.Since(begin).Seconds())
 
 		if err != nil {
@@ -1543,15 +1546,15 @@ func (s *shards) sendSamplesWithBackoff(ctx context.Context, samples []prompb.Ti
 		s.qm.metrics.retriedHistogramsTotal.Add(float64(histogramCount))
 	}
 
-	err = sendWriteRequestWithBackoff(ctx, s.qm.cfg, s.qm.logger, attemptStore, onRetry)
+	err := sendWriteRequestWithBackoff(ctx, s.qm.cfg, s.qm.logger, attemptStore, onRetry)
 	if errors.Is(err, context.Canceled) {
 		// When there is resharding, we cancel the context for this queue, which means the data is not sent.
 		// So we exit early to not update the metrics.
 		return err
 	}
 
-	s.qm.metrics.sentBytesTotal.Add(float64(reqSize))
-	s.qm.metrics.highestSentTimestamp.Set(float64(highest / 1000))
+	//s.qm.metrics.sentBytesTotal.Add(float64(reqSize))
+	//s.qm.metrics.highestSentTimestamp.Set(float64(highest / 1000))
 
 	return err
 }
@@ -1606,43 +1609,4 @@ func sendWriteRequestWithBackoff(ctx context.Context, cfg config.QueueConfig, l 
 
 		try++
 	}
-}
-
-func buildWriteRequest(samples []prompb.TimeSeries, metadata []prompb.MetricMetadata, pBuf *proto.Buffer, buf []byte) ([]byte, int64, error) {
-	var highest int64
-	for _, ts := range samples {
-		// At the moment we only ever append a TimeSeries with a single sample or exemplar in it.
-		if len(ts.Samples) > 0 && ts.Samples[0].Timestamp > highest {
-			highest = ts.Samples[0].Timestamp
-		}
-		if len(ts.Exemplars) > 0 && ts.Exemplars[0].Timestamp > highest {
-			highest = ts.Exemplars[0].Timestamp
-		}
-		if len(ts.Histograms) > 0 && ts.Histograms[0].Timestamp > highest {
-			highest = ts.Histograms[0].Timestamp
-		}
-	}
-
-	req := &prompb.WriteRequest{
-		Timeseries: samples,
-		Metadata:   metadata,
-	}
-
-	if pBuf == nil {
-		pBuf = proto.NewBuffer(nil) // For convenience in tests. Not efficient.
-	} else {
-		pBuf.Reset()
-	}
-	err := pBuf.Marshal(req)
-	if err != nil {
-		return nil, highest, err
-	}
-
-	// snappy uses len() to see if it needs to allocate a new slice. Make the
-	// buffer as long as possible.
-	if buf != nil {
-		buf = buf[0:cap(buf)]
-	}
-	compressed := snappy.Encode(buf, pBuf.Bytes())
-	return compressed, highest, nil
 }
