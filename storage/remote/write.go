@@ -153,17 +153,33 @@ func (rws *WriteStorage) ApplyConfig(conf *config.Config) error {
 			name = rwConf.Name
 		}
 
-		c, err := NewWriteClient(name, &ClientConfig{
-			URL:              rwConf.URL,
-			Timeout:          rwConf.RemoteTimeout,
-			HTTPClientConfig: rwConf.HTTPClientConfig,
-			SigV4Config:      rwConf.SigV4Config,
-			AzureADConfig:    rwConf.AzureADConfig,
-			Headers:          rwConf.Headers,
-			RetryOnRateLimit: rwConf.QueueConfig.RetryOnRateLimit,
-		})
-		if err != nil {
-			return err
+		var c WriteClient
+		if rwConf.SendOTLPMetrics {
+			c, err = NewOTLPWriteClient(name, &ClientConfig{
+				URL:              rwConf.URL,
+				Timeout:          rwConf.RemoteTimeout,
+				HTTPClientConfig: rwConf.HTTPClientConfig,
+				SigV4Config:      rwConf.SigV4Config,
+				AzureADConfig:    rwConf.AzureADConfig,
+				Headers:          rwConf.Headers,
+				RetryOnRateLimit: rwConf.QueueConfig.RetryOnRateLimit,
+			}, rws.logger)
+			if err != nil {
+				return err
+			}
+		} else {
+			c, err = NewWriteClient(name, &ClientConfig{
+				URL:              rwConf.URL,
+				Timeout:          rwConf.RemoteTimeout,
+				HTTPClientConfig: rwConf.HTTPClientConfig,
+				SigV4Config:      rwConf.SigV4Config,
+				AzureADConfig:    rwConf.AzureADConfig,
+				Headers:          rwConf.Headers,
+				RetryOnRateLimit: rwConf.QueueConfig.RetryOnRateLimit,
+			})
+			if err != nil {
+				return err
+			}
 		}
 
 		queue, ok := rws.queues[hash]

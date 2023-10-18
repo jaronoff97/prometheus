@@ -132,9 +132,11 @@ func newMetrics(r prometheus.Registerer) *metrics {
 		),
 		responseSize: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
-				Name:    "prometheus_http_response_size_bytes",
-				Help:    "Histogram of response size for HTTP requests.",
-				Buckets: prometheus.ExponentialBuckets(100, 10, 8),
+				Name:                           "prometheus_http_response_size_bytes",
+				Help:                           "Histogram of response size for HTTP requests.",
+				Buckets:                        prometheus.ExponentialBuckets(100, 10, 8),
+				NativeHistogramBucketFactor:    1.1, // 10% increase from bucket to bucket
+				NativeHistogramMaxBucketNumber: 100,
 			},
 			[]string{"handler"},
 		),
